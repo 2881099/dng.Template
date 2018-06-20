@@ -4,11 +4,15 @@
     <AssemblyName>dng.Template</AssemblyName>
     <PackageId>dng.Template</PackageId>
     <RootNamespace>dng.Template</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageProjectUrl>https://github.com/2881099/dng.Template</PackageProjectUrl>
     <Description>模板引擎，不再使用（作纪念），.NETCore版本</Description>
     <RepositoryUrl>https://github.com/2881099/dng.Template</RepositoryUrl>
     <PackageTags>模板 模板引擎 template 渲染 render</PackageTags>
+    <WarningLevel>3</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DocumentationFile>bin\Debug\netstandard2.0\dng.Template.xml</DocumentationFile>
   </PropertyGroup>
 </Project>
