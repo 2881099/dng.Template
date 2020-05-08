@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.IO;
 using System.Threading;
+using System.Reflection;
+using System.Linq;
 
 namespace dng {
 	public sealed class Template : IDisposable {
@@ -67,7 +69,7 @@ namespace dng {
 			ITemplateOutput tpl;
 			if (_cache.TryGetValue(filename2, out tpl) == false) {
 				string tplcode = File.Exists(filename2) == false ? string.Concat("文件不存在 ", filename) : Utils.ReadTextFile(filename2);
-				tpl = Parser(tplcode, options);
+				tpl = CompileIto(tplcode, options);
 				lock (_cache_lock) {
 					if (_cache.ContainsKey(filename2) == false) {
 						_cache.Add(filename2, tpl);
@@ -94,7 +96,19 @@ namespace dng {
 			TemplateReturnInfo ret = this.RenderFile2(null, options, filename, null);
 			return ret.Sb.ToString();
 		}
-		private static ITemplateOutput Parser(string tplcode, IDictionary options) {
+
+		public class TemplateCompiled
+		{
+			ITemplateOutput _ito;
+			internal TemplateCompiled(ITemplateOutput ito) => _ito = ito;
+
+			public string Render(IDictionary options) => _ito?.OuTpUt(new StringBuilder(), options, null, null)?.Sb.ToString();
+		}
+		public static TemplateCompiled CompileTpl(string tplcode, IDictionary options)
+		{
+			return new TemplateCompiled(CompileIto(tplcode, options));
+		}
+		private static ITemplateOutput CompileIto(string tplcode, IDictionary options) {
 			int view = Interlocked.Increment(ref _view);
 			StringBuilder sb = new StringBuilder();
 			IDictionary options_copy = new Hashtable();
@@ -439,7 +453,10 @@ return rTn;");
 			dynamic {0} = oPtIoNs[""{0}""];", dic_name));
 			}
 			//Console.WriteLine(sb.ToString());
-			return Complie(sb.ToString(), @"TplDynamicCodeGenerate.view" + view);
+			var assembly = CompileCode(sb.ToString());
+			var className = @"TplDynamicCodeGenerate.view" + view;
+			var type = assembly.GetExportedTypes()/*.DefinedTypes*/.Where(a => a.FullName.EndsWith(className)).FirstOrDefault();
+			return type == null ? null : Activator.CreateInstance(type) as ITemplateOutput;
 		}
 		private static string codeTreeEnd(Stack<string> codeTree, string tag) {
 			string ret = string.Empty;
@@ -534,60 +551,79 @@ return rTn;");
 		}
 		#endregion
 		#region Complie
-		//private static string _db_dll_location;
-		private static ITemplateOutput Complie(string cscode, string typename) {
-			//// 1.CSharpCodePrivoder
-			//CSharpCodeProvider objCSharpCodePrivoder = new CSharpCodeProvider();
-			//// 3.CompilerParameters
-			//CompilerParameters objCompilerParameters = new CompilerParameters();
-			//objCompilerParameters.ReferencedAssemblies.Add("System.dll");
-			//objCompilerParameters.GenerateExecutable = false;
-			//objCompilerParameters.GenerateInMemory = true;
+#if ns20 || ns21
 
-			//if (string.IsNullOrEmpty(_db_dll_location)) _db_dll_location = Type.GetType("{0}.DAL.PSqlHelper, {0}.db").Assembly.Location;
-			//objCompilerParameters.ReferencedAssemblies.Add(Assembly.GetEntryAssembly().Location);
-			//objCompilerParameters.ReferencedAssemblies.Add(_db_dll_location);
-			//objCompilerParameters.ReferencedAssemblies.Add("System.Core.dll");
-			//objCompilerParameters.ReferencedAssemblies.Add("Microsoft.CSharp.dll");
-			//// 4.CompilerResults
-			//CompilerResults cr = objCSharpCodePrivoder.CompileAssemblyFromSource(objCompilerParameters, cscode);
+		static Lazy<CSScriptLib.RoslynEvaluator> _compiler = new Lazy<CSScriptLib.RoslynEvaluator>(() =>
+		{
+			var compiler = new CSScriptLib.RoslynEvaluator();
+			compiler.DisableReferencingFromCode = false;
+			compiler
+				.ReferenceAssemblyOf<Template>()
+				.ReferenceDomainAssemblies();
+			return compiler;
+		});
 
-			//if (cr.Errors.HasErrors) {
-			//	StringBuilder sb = new StringBuilder();
-			//	sb.Append("编译错误：");
-			//	int undefined_idx = 0;
-			//	int undefined_cout = 0;
-			//	Dictionary<string, bool> undefined_exists = new Dictionary<string, bool>();
-			//	foreach (CompilerError err in cr.Errors) {
-			//		sb.Append(err.ErrorText + " 在第" + err.Line + "行\r\n");
-			//		if (err.ErrorNumber == "CS0103") {
-			//			//如果未定义变量，则自定义变量后重新编译
-			//			Match m = _reg_complie_undefined.Match(err.ErrorText);
-			//			if (m.Success) {
-			//				string undefined_name = m.Groups[2].Value;
-			//				if (undefined_exists.ContainsKey(undefined_name) == false) {
-			//					if (undefined_idx <= 0) undefined_idx = cscode.IndexOf("dng.Template.TemplatePrint Print = print;") + 37;
-			//					cscode = cscode.Insert(undefined_idx, string.Format("\r\n\t\t\tdynamic {0} = oPtIoNs[\"{0}\"];", undefined_name));
-			//					undefined_exists.Add(undefined_name, true);
-			//				}
-			//				undefined_cout++;
-			//			} else {
-			//				sb.AppendFormat("错误编号：CS0103，但是 _reg_undefined({0}) 匹配不到 ErrorText({1})\r\n", _reg_complie_undefined, err.ErrorText);
-			//			}
-			//		}
-			//	}
-			//	if (cr.Errors.Count == undefined_cout) {
-			//		return Complie(cscode, typename);
-			//	} else {
-			//		sb.Append(cscode);
-			//		throw new Exception(sb.ToString());
-			//	}
-			//} else {
-			//	object ret = cr.CompiledAssembly.CreateInstance(typename);
-			//	return ret as ITemplateOutput;
-			//}
-			return null;
+		static Assembly CompileCode(string cscode)
+		{
+			try
+			{
+				return _compiler.Value.CompileCode(cscode);
+			}
+			catch (Exception ex)
+			{
+				throw new Exception($"FreeSql.DynamicProxy 失败提示：{ex.Message} {cscode}", ex);
+			}
 		}
+#else
+
+    static Assembly CompileCode(string cscode)
+    {
+
+        var files = Directory.GetFiles(Directory.GetParent(Type.GetType("FreeSql.DynamicProxy, FreeSql.DynamicProxy").Assembly.Location).FullName);
+        using (var compiler = System.CodeDom.Compiler.CodeDomProvider.CreateProvider("cs"))
+        {
+            var objCompilerParameters = new System.CodeDom.Compiler.CompilerParameters();
+            objCompilerParameters.ReferencedAssemblies.Add("System.dll");
+            objCompilerParameters.ReferencedAssemblies.Add("System.Core.dll");
+            objCompilerParameters.ReferencedAssemblies.Add("FreeSql.DynamicProxy.dll");
+            foreach (var dll in files)
+            {
+                if (!dll.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) &&
+                    !dll.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+
+                Console.WriteLine(dll);
+                var dllName = string.Empty;
+                var idx = dll.LastIndexOf('/');
+                if (idx != -1) dllName = dll.Substring(idx + 1);
+                else
+                {
+                    idx = dll.LastIndexOf('\\');
+                    if (idx != -1) dllName = dll.Substring(idx + 1);
+                }
+                if (string.IsNullOrEmpty(dllName)) continue;
+                try
+                {
+                    var ass = Assembly.LoadFile(dll);
+                    objCompilerParameters.ReferencedAssemblies.Add(dllName);
+                }
+                catch
+                {
+
+                }
+            }
+            objCompilerParameters.GenerateExecutable = false;
+            objCompilerParameters.GenerateInMemory = true;
+
+            var cr = compiler.CompileAssemblyFromSource(objCompilerParameters, cscode);
+
+            if (cr.Errors.Count > 0)
+                throw new DynamicProxyException($"FreeSql.DynamicProxy 失败提示：{cr.Errors[0].ErrorText} {cscode}", null);
+
+            return cr.CompiledAssembly;
+        }
+    }
+
+#endif
 		#endregion
 
 		#region Utils
